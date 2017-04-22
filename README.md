@@ -1,19 +1,28 @@
 # IRCBot
 
-**TODO: Add description**
+An IRC bot implementation in Elixir.
 
-## Installation
 
-If [available in Hex](https://hex.pm/docs/publish), the package can be installed
-by adding `ircbot` to your list of dependencies in `mix.exs`:
+# Example
 
-```elixir
-def deps do
-  [{:ircbot, "~> 0.1.0"}]
-end
-```
+Here is a quick example how to start a bot:
 
-Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
-and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
-be found at [https://hexdocs.pm/ircbot](https://hexdocs.pm/ircbot).
+1. Open an interactive Elixir shell:
 
+	```shell
+	$ iex -S mix
+	```
+
+	Then spawn a new bot:
+
+	```elixir
+	IRCBot.start_link(%{server: "foobar", port: 6697, nickname: "foobarbaz", channels: ["#foobar"], ssl: true})
+	```
+
+2. Create your own Elixir application.
+
+
+# Extending the bot
+
+Enable the debug messages to aid you debugging the bot interactions.
+To do this comment out the logger configuration in the config/config.exs file.
