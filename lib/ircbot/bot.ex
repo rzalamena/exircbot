@@ -7,7 +7,10 @@ defmodule IRCBot.Bot do
 
   defmodule State do
     @moduledoc false
-    defstruct [:socket, :server, :port, :nickname, :ssl, :channels]
+    defstruct [
+      :socket, :server, :port, :nickname, :ssl, :channels,
+      :cur_server, :ping_timer,
+    ]
   end
 
   @doc """
@@ -92,6 +95,7 @@ defmodule IRCBot.Bot do
       false ->
         :inet.setopts(state.socket, active: :once)
     end
+    state
   end
 
   # Send message using the correct method.
@@ -160,10 +164,13 @@ defmodule IRCBot.Bot do
           |> String.trim
         Logger.debug(fn -> "PING: #{inspect tail}" end)
         handle_ping(state, server)
+        state
       [server | tail] ->
         handle_server(state, server, tail)
+        %State{state | cur_server: server}
       _ ->
         Logger.debug(fn -> "Unhandled: #{inspect m}" end)
+        state
     end
   end
 
@@ -178,6 +185,7 @@ defmodule IRCBot.Bot do
         senddata(nstate, "NICK #{state.nickname}\n")
         for channel <- nstate.channels,
           do: senddata(nstate, "JOIN #{channel}\n")
+        nstate = schedule_ping(nstate)
         {:noreply, nstate}
       {:error, _} ->
         schedule_connect(5000)
@@ -185,22 +193,40 @@ defmodule IRCBot.Bot do
     end
   end
 
+  def handle_info(:ping, state) do
+    senddata(state, "PING #{state.cur_server}\n")
+    {:noreply, state}
+  end
+
   def handle_info({:tcp, _, msg}, state) do
     m = String.split(msg, " ", parts: 4)
-    handle_message(state, m)
-    recvmore(state)
-    {:noreply, state}
+    nstate = state
+      |> handle_message(m)
+      |> recvmore()
+      |> schedule_ping()
+    {:noreply, nstate}
   end
 
   def handle_info({:ssl, _, msg}, state) do
     m = String.split(msg, " ", parts: 4)
-    handle_message(state, m)
-    recvmore(state)
-    {:noreply, state}
+    nstate = state
+      |> handle_message(m)
+      |> recvmore()
+      |> schedule_ping()
+    {:noreply, nstate}
   end
 
   # Schedule connect
   defp schedule_connect(timeout \\ 0) do
     Process.send_after(self(), :connect, timeout)
+  end
+
+  # Schedule ping
+  defp schedule_ping(state, timeout \\ 60000) do
+    if state.ping_timer do
+      Process.cancel_timer(state.ping_timer)
+    end
+    ping_timer = Process.send_after(self(), :ping, timeout)
+    %State{state | ping_timer: ping_timer}
   end
 end
