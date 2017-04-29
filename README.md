@@ -10,16 +10,16 @@ Here is a quick example how to start a bot:
 1. Open an interactive Elixir shell:
 
 	```shell
-	$ iex -S mix
+	$ iex -S mix run --no-start
 	```
 
 	Then spawn a new bot:
 
 	```elixir
-	IRCBot.start_link(%{server: "foobar", port: 6697, nickname: "foobarbaz", channels: ["#foobar"], ssl: true})
+	IRCBot.Bot.start_link(%{server: "foobar", port: 6697, nickname: "foobarbaz", channels: ["#foobar"], ssl: true})
 	```
 
-2. Create your own Elixir application.
+2. Edit the `config/config.exs` file and run as an application.
 
 
 # Extending the bot
