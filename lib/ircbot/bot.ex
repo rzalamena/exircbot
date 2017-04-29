@@ -106,12 +106,12 @@ defmodule IRCBot.Bot do
 
   # Send message to specified destination
   defp reply(state, who, msg) do
-    senddata(state, "PRIVMSG #{who} :#{msg}\r\n")
+    senddata(state, "PRIVMSG #{who} :#{msg}\n")
   end
 
   # Handle PING messages.
   defp handle_ping(state, m) do
-    senddata(state, "PONG #{m}\r\n")
+    senddata(state, "PONG #{m}\n")
   end
 
   # Handle channel/people messages.
@@ -174,10 +174,10 @@ defmodule IRCBot.Bot do
     case connect(state) do
       {:ok, socket} ->
         nstate = %State{state | socket: socket}
-        senddata(nstate, "USER #{state.nickname} * * :#{state.nickname}\r\n")
-        senddata(nstate, "NICK #{state.nickname}\r\n")
+        senddata(nstate, "USER #{state.nickname} * * :#{state.nickname}\n")
+        senddata(nstate, "NICK #{state.nickname}\n")
         for channel <- nstate.channels,
-          do: senddata(nstate, "JOIN #{channel}\r\n")
+          do: senddata(nstate, "JOIN #{channel}\n")
         {:noreply, nstate}
       {:error, _} ->
         schedule_connect(5000)
