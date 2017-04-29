@@ -139,6 +139,9 @@ defmodule IRCBot.Bot do
   # Handle server messages.
   defp handle_server(state, server, m) do
     case m do
+      ["PONG" | _] ->
+        # Nothing to do, the server just replied our ping.
+        nil
       ["PRIVMSG" | tail] ->
         who = server
           |> String.trim_leading(":")
@@ -162,7 +165,6 @@ defmodule IRCBot.Bot do
       ["PING" | tail] ->
         server = Enum.at(tail, 0)
           |> String.trim
-        Logger.debug(fn -> "PING: #{inspect tail}" end)
         handle_ping(state, server)
         state
       [server | tail] ->
