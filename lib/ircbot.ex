@@ -12,7 +12,8 @@ defmodule IRCBot do
 		}
 
 		children = [
-			worker(IRCBot.Bot, [opts])
+			worker(IRCBot.Bot, [opts]),
+			supervisor(IRCBot.Repo, []),
 		]
 
 		Supervisor.start_link(children, strategy: :one_for_one)

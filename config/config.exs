@@ -30,6 +30,15 @@ config :ircbot,
 	channels: ["#channel"],
 	ssl: false
 
+config :ircbot,
+  ecto_repos: [IRCBot.Repo]
+
+config :ircbot, IRCBot.Repo,
+  adapter: Ecto.Adapters.Postgres,
+  database: "ircbot_dev",
+  username: "ircbot",
+  hostname: "localhost"
+
 # It is also possible to import configuration files, relative to this
 # directory. For example, you can emulate configuration per environment
 # by uncommenting the line below and defining dev.exs, test.exs and such.

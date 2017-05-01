@@ -118,18 +118,52 @@ defmodule IRCBot.Bot do
     senddata(state, "PONG #{m}\n")
   end
 
+  # Handle karma.
+  defp handle_karma(state, message, to) do
+    Regex.scan(~r/([^ ]+)(\+\+|\-\-)/, message)
+    |> Enum.map(fn x ->
+      what = x
+        |> Enum.at(1)
+        |> String.downcase
+      type = x
+        |> Enum.at(2)
+      karma_op =
+        if type == "++" do
+          &IRCBot.Karma.karma_add/1
+        else
+          &IRCBot.Karma.karma_rem/1
+        end
+      case karma_op.(what) do
+        {:ok, karma} ->
+          reply(state, to, "#{karma.what} has now #{karma.score} point(s)")
+        {:error, _} ->
+          reply(state, to, "Failed to register #{what}, sorry about that :(")
+      end
+    end)
+  end
+
   # Handle channel/people messages.
   defp handle_privmsg(state, who, where, message) do
+    botnick = state.nickname
+    to =
+      case where do
+        ^botnick ->
+          # Respond to channel where the message came from.
+          who
+        _ ->
+          # Respond privately to whom asked.
+          where
+      end
+
+    handle_karma(state, message, to)
+
     cond do
       String.match?(message, ~r/^ping/i) ->
-        botnick = state.nickname
         case where do
           ^botnick ->
-            # Respond to channel where the message came from.
-            reply(state, who, "pong #{who}")
+            reply(state, to, "pong")
           _ ->
-            # Respond privately to whom asked.
-            reply(state, where, "pong #{who}")
+            reply(state, to, "#{who}: pong")
         end
       true ->
         Logger.debug(fn -> "#{who}@#{where}: #{message})" end)

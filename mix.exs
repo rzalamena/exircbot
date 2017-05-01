@@ -34,6 +34,8 @@ defmodule IRCBot.Mixfile do
     [
       {:ex_doc, "~> 0.15.1", only: :doc},
       {:dialyxir, "~> 0.5", only: :dev, runtime: false},
+      {:postgrex, ">= 0.0.0"},
+      {:ecto, "~> 2.1.4"},
     ]
   end
 end
