@@ -9,9 +9,19 @@ defmodule IRCBot.Bot do
     @moduledoc false
     defstruct [
       :socket, :server, :port, :nickname, :ssl, :channels,
-      :cur_server, :ping_timer,
+      :cur_server, :ping_timer, :sendq, :send_timer,
     ]
+
+    @type t :: %__MODULE__{
+      server: String.t, port: non_neg_integer, nickname: String.t,
+      ssl: boolean, channels: [String.t], cur_server: String.t | none,
+      ping_timer: reference | none, send_timer: reference | none,
+    }
   end
+
+  @rate_bucket "ircbot-ratelimit"
+  @rate_time 1_000
+  @rate_amount 1
 
   @doc """
   Start the bot with the configured parameters.
@@ -59,6 +69,7 @@ defmodule IRCBot.Bot do
           nickname: nickname,
           channels: channels,
           ssl: ssl,
+          sendq: :queue.new(),
          }}
   end
 
@@ -98,8 +109,16 @@ defmodule IRCBot.Bot do
     state
   end
 
-  # Send message using the correct method.
+  # Prepare message to send
+  @spec senddata(State.t, String.t) :: State.t
   defp senddata(state, data) do
+    sendq = :queue.in(data, state.sendq)
+    %State{state | sendq: sendq}
+    |> schedule_send()
+  end
+
+  # Send message using the correct method.
+  defp send_now(state, data) do
     case state.ssl do
       true ->
         :ssl.send(state.socket, data)
@@ -109,40 +128,42 @@ defmodule IRCBot.Bot do
   end
 
   # Send message to specified destination
+  @spec reply(State.t, String.t, String.t) :: State.t
   defp reply(state, who, msg) do
     senddata(state, "PRIVMSG #{who} :#{msg}\n")
   end
 
-  # Handle PING messages.
-  defp handle_ping(state, m) do
-    senddata(state, "PONG #{m}\n")
-  end
-
   # Handle karma.
+  @spec handle_karma(State.t, String.t, String.t) :: State.t
   defp handle_karma(state, message, to) do
-    Regex.scan(~r/([^ ]+)(\+\+|\-\-)/, message)
-    |> Enum.map(fn x ->
-      what = x
-        |> Enum.at(1)
-        |> String.downcase
-      type = x
-        |> Enum.at(2)
-      karma_op =
-        if type == "++" do
-          &IRCBot.Karma.karma_add/1
-        else
-          &IRCBot.Karma.karma_rem/1
+    r = Regex.scan(~r/([^ ]+)(\+\+|\-\-)/, message)
+    if Enum.empty?(r) do
+      state
+    else
+      Enum.reduce(r, state, fn(x, nstate) ->
+        what = x
+          |> Enum.at(1)
+          |> String.downcase
+        type = x
+          |> Enum.at(2)
+        karma_op =
+          if type == "++" do
+            &IRCBot.Karma.karma_add/1
+          else
+            &IRCBot.Karma.karma_rem/1
+          end
+        case karma_op.(what) do
+          {:ok, karma} ->
+            reply(nstate, to, "#{karma.what} has now #{karma.score} point(s)")
+          {:error, _} ->
+            reply(nstate, to, "Failed to register #{what}, sorry about that :(")
         end
-      case karma_op.(what) do
-        {:ok, karma} ->
-          reply(state, to, "#{karma.what} has now #{karma.score} point(s)")
-        {:error, _} ->
-          reply(state, to, "Failed to register #{what}, sorry about that :(")
-      end
-    end)
+      end)
+    end
   end
 
   # Handle channel/people messages.
+  @spec handle_privmsg(State.t, String.t, String.t, String.t) :: State.t
   defp handle_privmsg(state, who, where, message) do
     botnick = state.nickname
     to =
@@ -155,7 +176,7 @@ defmodule IRCBot.Bot do
           where
       end
 
-    handle_karma(state, message, to)
+    state = handle_karma(state, message, to)
 
     cond do
       String.match?(message, ~r/^ping/i) ->
@@ -167,15 +188,17 @@ defmodule IRCBot.Bot do
         end
       true ->
         Logger.debug(fn -> "#{who}@#{where}: #{message})" end)
+        state
     end
   end
 
   # Handle server messages.
+  @spec handle_server(State.t, String.t, [String.t]) :: State.t
   defp handle_server(state, server, m) do
     case m do
       ["PONG" | _] ->
         # Nothing to do, the server just replied our ping.
-        nil
+        state
       ["PRIVMSG" | tail] ->
         who = server
           |> String.trim_leading(":")
@@ -190,20 +213,22 @@ defmodule IRCBot.Bot do
         handle_privmsg(state, who, where, message)
       _ ->
         Logger.debug(fn -> "#{server}: #{inspect m}" end)
+        state
     end
   end
 
   # Generic message handling
+  @spec handle_message(State.t, [String.t]) :: State.t
   defp handle_message(state, m) do
     case m do
       ["PING" | tail] ->
         server = Enum.at(tail, 0)
           |> String.trim
-        handle_ping(state, server)
+        send_now(state, "PONG #{server}\n")
         state
       [server | tail] ->
-        handle_server(state, server, tail)
         %State{state | cur_server: server}
+        |> handle_server(server, tail)
       _ ->
         Logger.debug(fn -> "Unhandled: #{inspect m}" end)
         state
@@ -217,10 +242,10 @@ defmodule IRCBot.Bot do
     case connect(state) do
       {:ok, socket} ->
         nstate = %State{state | socket: socket}
-        senddata(nstate, "USER #{state.nickname} * * :#{state.nickname}\n")
-        senddata(nstate, "NICK #{state.nickname}\n")
+        send_now(nstate, "USER #{state.nickname} * * :#{state.nickname}\n")
+        send_now(nstate, "NICK #{state.nickname}\n")
         for channel <- nstate.channels,
-          do: senddata(nstate, "JOIN #{channel}\n")
+          do: send_now(nstate, "JOIN #{channel}\n")
         nstate = schedule_ping(nstate)
         {:noreply, nstate}
       {:error, _} ->
@@ -230,7 +255,36 @@ defmodule IRCBot.Bot do
   end
 
   def handle_info(:ping, state) do
-    senddata(state, "PING #{state.cur_server}\n")
+    send_now(state, "PING #{state.cur_server}\n")
+    state = schedule_ping(state)
+    {:noreply, state}
+  end
+
+  # This function handles the server output speed.
+  #
+  # It also schedule and cancel server pings to reduce the traffic and avoid being
+  # flagged by the IRC server as a flooder.
+  def handle_info(:send, state) do
+    state =
+      case :queue.out(state.sendq) do
+        {:empty, _} ->
+          # No more messages to send, ping the server to keep alive.
+          schedule_ping(state)
+        {{_, data}, newq} ->
+          case ExRated.check_rate(@rate_bucket, @rate_time, @rate_amount) do
+            {:ok, _} ->
+              # Output queued data.
+              send_now(state, data)
+              %State{state | sendq: newq}
+              |> ping_cancel()
+              |> schedule_send()
+            {:error, _} ->
+              # We exceeded our send rate, wait for next time slot.
+              {_, _, delay, _, _} = ExRated.inspect_bucket(@rate_bucket, @rate_time, @rate_amount)
+              ping_cancel(state)
+              |> schedule_send(delay)
+          end
+      end
     {:noreply, state}
   end
 
@@ -239,7 +293,6 @@ defmodule IRCBot.Bot do
     nstate = state
       |> handle_message(m)
       |> recvmore()
-      |> schedule_ping()
     {:noreply, nstate}
   end
 
@@ -248,7 +301,6 @@ defmodule IRCBot.Bot do
     nstate = state
       |> handle_message(m)
       |> recvmore()
-      |> schedule_ping()
     {:noreply, nstate}
   end
 
@@ -257,12 +309,27 @@ defmodule IRCBot.Bot do
     Process.send_after(self(), :connect, timeout)
   end
 
-  # Schedule ping
-  defp schedule_ping(state, timeout \\ 60000) do
+  # Cancel ping schedule
+  defp ping_cancel(state) do
     if state.ping_timer do
       Process.cancel_timer(state.ping_timer)
     end
+    %State{state | ping_timer: nil}
+  end
+
+  # Schedule ping
+  defp schedule_ping(state, timeout \\ 60000) do
+    state = ping_cancel(state)
     ping_timer = Process.send_after(self(), :ping, timeout)
     %State{state | ping_timer: ping_timer}
+  end
+
+  # Schedule data send
+  defp schedule_send(state, timeout \\ 100) do
+    if state.send_timer do
+      Process.cancel_timer(state.send_timer)
+    end
+    send_timer = Process.send_after(self(), :send, timeout)
+    %State{state | send_timer: send_timer}
   end
 end

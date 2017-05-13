@@ -3,7 +3,7 @@ defmodule IRCBot.Mixfile do
 
   def project do
     [app: :ircbot,
-     version: "0.1.0",
+     version: "0.2.0",
      elixir: "~> 1.4",
      build_embedded: Mix.env == :prod,
      start_permanent: Mix.env == :prod,
@@ -36,6 +36,7 @@ defmodule IRCBot.Mixfile do
       {:dialyxir, "~> 0.5", only: :dev, runtime: false},
       {:postgrex, ">= 0.0.0"},
       {:ecto, "~> 2.1.4"},
+      {:ex_rated, "~> 1.3.1"},
     ]
   end
 end
